@@ -34,7 +34,7 @@ def get(text: str) -> Optional[AnalysisResult]:
 
 def put(text: str, result: AnalysisResult):
     """存入缓存"""
-    key = _hash(text[:5000])
+    key = _hash(text)
     _cache[key] = (time.time(), result)
     # 清理过期项
     expired = [k for k, (ts, _) in _cache.items() if time.time() - ts > CACHE_TTL]

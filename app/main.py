@@ -67,6 +67,111 @@ async def health_check():
     }
 
 
+# 暂存最新报告数据
+_latest_report: AnalysisResult | None = None
+
+
+@app.post("/report")
+async def save_report(result: AnalysisResult):
+    """保存最新分析结果，供 GET /report/latest 下载"""
+    global _latest_report
+    _latest_report = result
+    return {"status": "ok"}
+
+
+@app.get("/report/latest")
+async def download_latest_report():
+    """下载最新的 HTML 分析报告"""
+    from fastapi.responses import HTMLResponse
+
+    global _latest_report
+    if not _latest_report:
+        return HTMLResponse(content="<p>No analysis result yet</p>", status_code=404)
+
+    result = _latest_report
+    prob = result.truth_probability
+    color = "#22c55e" if prob >= 70 else "#f59e0b" if prob >= 40 else "#ef4444"
+
+    evidence_rows = ""
+    for ev in result.evidence_list:
+        icon = {"支持": "✅", "反对": "❌", "中立": "➖"}.get(ev.stance, "➖")
+        cv = "✅ 已交叉验证" if ev.cross_verified else "⚠️ 单一信源"
+        evidence_rows += f"""
+        <tr>
+            <td>{icon} {ev.stance}</td>
+            <td>{ev.content}</td>
+            <td>{ev.source_name} [{ev.source_level.value}级] {cv}</td>
+        </tr>"""
+
+    claims_rows = ""
+    for cc in result.core_claims:
+        claims_rows += f"<tr><td>{cc.claim}</td><td>{cc.truth_score:.0f}%</td><td>权重 {cc.weight:.0%}</td></tr>"
+
+    warnings_html = ""
+    if result.warnings:
+        warnings_html = "<h3>⚠️ 可疑信号</h3><ul>" + "".join(f"<li>{w}</li>" for w in result.warnings) + "</ul>"
+
+    propagation_html = ""
+    if result.propagation:
+        propagation_html = "<h3>📡 传播路径</h3><ol>" + "".join(
+            f"<li>{p.time} · {p.platform} · {p.description}</li>" for p in result.propagation
+        ) + "</ol>"
+
+    report = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>TruthCatcher 分析报告</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1f2937; }}
+  h1 {{ font-size: 24px; margin-bottom: 4px; }} h2 {{ font-size: 18px; margin-top: 24px; }}
+  .prob {{ font-size: 48px; font-weight: 700; color: {color}; }} .meta {{ color: #9ca3af; font-size: 14px; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 12px 0; }}
+  th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 14px; }}
+  th {{ background: #f9fafb; }}
+  .section {{ background: #f9fafb; padding: 16px; border-radius: 8px; margin: 12px 0; }}
+  .warning {{ background: #fef2f2; padding: 16px; border-radius: 8px; border-left: 4px solid #ef4444; }}
+  footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }}
+</style></head>
+<body>
+  <h1>TruthCatcher 新闻真伪分析报告</h1>
+  <p class="meta">生成时间: {result.analyzed_at} · 搜索信源: {result.search_sources_count}条 · 可靠信源: {result.reliable_sources_count}条</p>
+
+  <div style="text-align:center; margin: 24px 0;">
+    <div class="prob">{prob:.0f}%</div>
+    <p>真实概率 · 置信度: {result.confidence_level}</p>
+  </div>
+
+  {propagation_html}
+  {warnings_html}
+
+  <h2>📋 新闻摘要</h2>
+  <div class="section">{result.summary}</div>
+
+  <h2>📖 来龙去脉</h2>
+  <div class="section">{result.background}</div>
+
+  <h2>🎯 核心主张</h2>
+  <table><tr><th>主张</th><th>真实度</th><th>权重</th></tr>{claims_rows}</table>
+
+  <h2>🔍 论据列表</h2>
+  <table><tr><th>立场</th><th>内容</th><th>来源</th></tr>{evidence_rows}</table>
+
+  <h2>🧠 论证过程</h2>
+  <div class="section">{result.reasoning}</div>
+
+  <footer>本报告由 TruthCatcher AI 自动生成，仅供参考。分析结果受搜索数据质量影响，不构成事实认定。</footer>
+</body></html>"""
+
+    return HTMLResponse(content=report, headers={"Content-Disposition": "attachment; filename=TruthCatcher_Report.html"})
+
+
+@app.post("/feedback")
+async def submit_feedback(rating: str, summary: str = ""):
+    """提交用户反馈: rating='up' 或 'down'"""
+    from app.services.history import save_feedback
+    save_feedback(rating, summary)
+    return {"status": "ok"}
+
+
 @app.post("/analyze", response_model=AnalysisResult)
 async def analyze_news(news_input: NewsInput):
     """分析新闻真伪 -- 同步模式"""

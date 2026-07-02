@@ -28,7 +28,7 @@ class Settings:
 
     # -- 模型配置 --
     llm_model: str = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
-    llm_max_tokens: int = 4096
+    llm_max_tokens: int = 8192
     llm_temperature: float = 0.0  # 分析用温度：0=确定性输出，避免结果离散
     llm_search_temperature: float = 0.3  # 搜索关键词生成用温度：可稍高
 

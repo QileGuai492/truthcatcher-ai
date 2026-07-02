@@ -71,22 +71,18 @@ class LLMAnalyzer:
             source_rating_summary=rating_summary,
         )
 
-        # -- Step 5: 流式 LLM 分析 --
+        # -- Step 5: 同步 LLM 分析 --
         yield ("analyzing", "AI 正在分析中...")
-        accumulated = ""
-        async for chunk in self.llm.chat_stream(
+        raw_text = await self.llm.chat(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=analysis_prompt,
             max_tokens=settings.llm_max_tokens,
             temperature=settings.llm_temperature,
-        ):
-            accumulated += chunk
-            # 每积累一定量就尝试解析，看是否已有完整论据
-            yield ("streaming", accumulated)
+        )
 
-        # -- Step 6: 解析最终结果 --
+        # -- Step 6: 解析结果 --
         yield ("parsing", "正在整理分析结果...")
-        result = self._parse_result(accumulated)
+        result = self._parse_result(raw_text)
         result.search_sources_count = len(rated_results)
         result.reliable_sources_count = sum(1 for r in rated_results if r.source_level in (SourceLevel.A, SourceLevel.B))
         yield ("done", result)
@@ -178,8 +174,14 @@ class LLMAnalyzer:
             core_claims_data = data.get("core_claims", [])
             core_claims: list[CoreClaim] = []
             for c in core_claims_data:
-                raw_score = float(c.get("truth_score", 50.0))
-                raw_weight = float(c.get("weight", 1.0 / max(len(core_claims_data), 1)))
+                try:
+                    raw_score = float(c.get("truth_score", 50.0))
+                except (TypeError, ValueError):
+                    raw_score = 50.0
+                try:
+                    raw_weight = float(c.get("weight", 1.0 / max(len(core_claims_data), 1)))
+                except (TypeError, ValueError):
+                    raw_weight = 1.0 / max(len(core_claims_data), 1)
                 core_claims.append(CoreClaim(
                     claim=c.get("claim", ""),
                     truth_score=raw_score,
@@ -235,7 +237,7 @@ class LLMAnalyzer:
                         stance=e.get("stance", "中立"),
                         source_url=e.get("source_url", ""),
                         source_name=e.get("source_name", ""),
-                        source_level=SourceLevel(e.get("source_level", "未知")),
+                        source_level=self._safe_level(e.get("source_level", "未知")),
                         cross_verified=bool(e.get("cross_verified", False)),
                         verified_by=e.get("verified_by", []),
                         credibility_note=e.get("credibility_note", ""),
@@ -329,6 +331,13 @@ class LLMAnalyzer:
                 result=result,
             )
             await callback(progress)
+
+    @staticmethod
+    def _safe_level(value: str) -> SourceLevel:
+        try:
+            return SourceLevel(value)
+        except ValueError:
+            return SourceLevel.UNKNOWN
 
     @staticmethod
     def _is_definitely_false(confidence: str) -> bool:

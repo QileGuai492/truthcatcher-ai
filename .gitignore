@@ -17,6 +17,9 @@ build/
 .vscode/
 .idea/
 
+# 文档工具
+tools/
+
 # OS
 .DS_Store
 Thumbs.db

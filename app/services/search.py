@@ -117,8 +117,6 @@ async def multi_search(queries: list[str], results_per_query: int = 5) -> list[S
     all_tasks = []
     for q in queries:
         all_tasks.append(search_serpapi(q, results_per_query))
-        all_tasks.append(search_duckduckgo(q, results_per_query))
-        all_tasks.append(search_bing(q, results_per_query))
 
     nested = await asyncio.gather(*all_tasks, return_exceptions=True)
 
@@ -144,35 +142,32 @@ async def generate_search_queries(news_content: str) -> list[str]:
 
     system_prompt = "你是一个专业的信息检索专家，擅长生成精准的搜索关键词。只输出搜索关键词，每行一个，不要编号或其他内容。"
 
-    user_prompt = f"""根据以下新闻内容，生成5-8组搜索关键词，用于从搜索引擎检索相关信息来验证该新闻的真伪。
+    user_prompt = f"""根据以下新闻内容，生成搜索关键词用于检索验证。
 
-搜索关键词要覆盖以下维度：
-1. 新闻核心主张的直接搜索
-2. 事件关键参与方 + 事件关键词
-3. 相关官方机构/权威来源的声明
-4. 反对/质疑该主张的搜索
-5. 相关的时间地点背景信息
+要求：
+- 生成3-4组中文关键词 + 3-4组英文关键词
+- 英文关键词用英文写，用于在Google/Bing上搜索英文信息来源
+- 覆盖：核心主张、关键参与方、权威来源声明、反对/质疑、时间地点背景
 
 新闻内容：
 ---
 {news_content[:2000]}
 ---
 
-请输出纯文本，每行一组搜索关键词，不要编号，不要其他内容。"""
+每行一组关键词，中英文混排，不要编号。"""
 
     try:
         text = await llm.chat(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=500,
+            max_tokens=600,
             temperature=settings.llm_search_temperature,
         )
 
         queries = [line.strip() for line in text.strip().split("\n") if line.strip()]
-        # 过滤掉可能多余的前缀编号
         queries = [q.lstrip("0123456789.-)） ") for q in queries if len(q) > 3]
-        logger.info(f"生成搜索关键词: {queries}")
-        return queries[:8]
+        logger.info(f"生成搜索关键词 (中+英): {queries}")
+        return queries[:10]
 
     except Exception as e:
         logger.error(f"生成搜索关键词失败: {e}")

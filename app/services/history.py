@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from app.models.analysis import AnalysisResult, CoreClaim, Evidence, SourceLevel
+from app.models.analysis import AnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +44,14 @@ def init_db():
             search_sources_count INTEGER DEFAULT 0,
             reliable_sources_count INTEGER DEFAULT 0,
             content_type TEXT DEFAULT 'text',
+            result_html TEXT DEFAULT '',
             created_at TEXT NOT NULL
         )
     """)
     # 向前兼容
     for col, def_val in [("warnings_json", "'[]'"), ("propagation_json", "'[]'"),
-                          ("rumor_match", "0"), ("rumor_reference", "''")]:
+                          ("rumor_match", "0"), ("rumor_reference", "''"),
+                          ("result_html", "''")]:
         try:
             conn.execute(f"SELECT {col} FROM analyses LIMIT 1")
         except sqlite3.OperationalError:
@@ -58,7 +60,7 @@ def init_db():
     conn.close()
 
 
-def save_result(news_text: str, result: AnalysisResult, content_type: str = "text", source_name: str = ""):
+def save_result(news_text: str, result: AnalysisResult, content_type: str = "text", source_name: str = "", result_html: str = ""):
     """保存分析结果"""
     init_db()
     conn = _get_conn()
@@ -67,8 +69,8 @@ def save_result(news_text: str, result: AnalysisResult, content_type: str = "tex
            (news_text, source_name, summary, truth_probability, confidence_level,
             background, reasoning, warnings_json, propagation_json, rumor_match, rumor_reference,
             core_claims_json, evidence_json,
-            search_sources_count, reliable_sources_count, content_type, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            search_sources_count, reliable_sources_count, content_type, result_html, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             news_text[:5000],
             source_name,
@@ -86,6 +88,7 @@ def save_result(news_text: str, result: AnalysisResult, content_type: str = "tex
             result.search_sources_count,
             result.reliable_sources_count,
             content_type,
+            result_html,
             datetime.now().isoformat(),
         ),
     )
@@ -121,6 +124,29 @@ def get_history_detail(analysis_id: int) -> Optional[dict]:
     return d
 
 
+def get_history_html(analysis_id: int) -> Optional[str]:
+    """获取历史记录中缓存的 HTML"""
+    init_db()
+    conn = _get_conn()
+    row = conn.execute("SELECT result_html FROM analyses WHERE id = ?", (analysis_id,)).fetchone()
+    conn.close()
+    if row and row["result_html"]:
+        return row["result_html"]
+    return None
+
+
+def list_history_for_dropdown(limit: int = 20) -> list[str]:
+    """列出历史记录，格式化为下拉选项"""
+    init_db()
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, summary, truth_probability, created_at FROM analyses ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [f"#{r['id']} [{r['truth_probability']:.0f}%] {r['summary'][:40]} ({r['created_at'][:16]})" for r in rows]
+
+
 def delete_history(analysis_id: int):
     """删除单条记录"""
     init_db()
@@ -128,3 +154,24 @@ def delete_history(analysis_id: int):
     conn.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
     conn.commit()
     conn.close()
+
+
+def save_feedback(rating: str, summary: str = ""):
+    """存储用户反馈"""
+    init_db()
+    conn = _get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rating TEXT NOT NULL,
+            summary TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "INSERT INTO feedback (rating, summary, created_at) VALUES (?, ?, ?)",
+        (rating, summary, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    logger.info(f"用户反馈已记录: {rating}")

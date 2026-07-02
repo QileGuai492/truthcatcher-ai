@@ -64,9 +64,7 @@ def rate_single_result(result: SearchResult) -> SearchResult:
         # 根据域名特征推断
         result.source_level = _infer_level_from_domain(domain)
 
-    if result.source_name:
-        pass  # SerpAPI 已提供
-    else:
+    if not result.source_name:
         result.source_name = domain
 
     return result
